@@ -4,12 +4,12 @@ Xiao Zhehao, A0235422N
 
 Benchmark: compress
 
-In this assignment, I used SimpleScalar, a simulation software for RISC computer architecture to deepen my understanding of ILP.
-Based on my student number, I will be working on the compress benchmark.
+In this assignment, I used SimpleScalar, a simulation software for RISC computer architecture to deepen my understanding of ILP. Based on my student number, I will be working on the compress benchmark. For the first question, I found that the highest performance processor under an area of 60 has an IPC of `1.186` with 2 pipeline width, 2 integer arithmetic logic units(ALUs), 1 integer multiplier, 1 floating point(FP) ALU | 1 FP multiplier, out-of-order issue with a 16 unit reorder buffer and 8 unit load store queue. For the second question, I found that the best performance per watt value processor is actually the minimum spec processor with IPC/Watt of `0.0420` and 1 pipeline width, 1 integer arithmetic logic units(ALUs), 1 integer multiplier, 1 floating point(FP) ALU | 1 FP multiplier and in-order issue. For the third question I found that the best l1 cache config for the highest IPC performance processor found in question 1 has `128` sets of data and instruction l1 cache each. 
 
+<!-- ### Preparation:
 First, to validate that my benchmarks are running correctly, I used `srun sim-safe benchmarks/compress95.ss < benchmarks/compress95.in > benchmarks/compress95.out` to obtain the below results, from which I could assertain that my benchmark was running without issue.
 
-![Validation Image](./images/0.validation_results.jpg)
+![Validation Image](./images/0.validation_results.jpg) -->
 
 ### Question A:
 The goal of this part is to design the best performing architecture under the constraint that the area of the processor is less than or equal to 60, based on the constraints listed below.
@@ -38,13 +38,13 @@ To do so, we have to understand the profile of our program, mainly the frequenci
 
 As seen from the summary above, there are almost no floating point operations. Hence, I hypothesise that reducing our floating point resources to the minimum will have almost no effect on our IPC performance. To test this, I used the default configuration with both the FP ALU and FP Multiplier values set to 1 against them set to 4 got an IPC values of `1.6362` and `1.6380`. As such, we can run with the reasonable assumption that floating point resources will not affect our IPC performance and hence they can always be set to 1 to minimise their area cost.
 
-From the instruction class distribution, I predict that we will need out-of-order execution as load/store operations have a long downtime on average, so having the ability to move forward with other non true dependent instructions would greatly help our IPC. As such we should see out-of-order execution with a decently sized Load/Store Queue and Reorder Buffer in our ideal solution. In addition, since both the load/store operations and integer computation use the integer ALU, it will be more favoured than the integer multiplication unit in our ideal solution.
+From the instruction class distribution, I predict that we will need out-of-order issue as load/store operations have a long downtime on average, so having the ability to move forward with other non true dependent instructions would greatly help our IPC. As such we should see out-of-order issue with a decently sized Load/Store Queue and Reorder Buffer in our ideal solution. In addition, since both the load/store operations and integer computation use the integer ALU, it will be more favoured than the integer multiplication unit in our ideal solution.
 
 In total, there are `4 * 4 * 4 * 4 * 4 * 2 * 3 * 3 = 18432` possible combinations of the resource values. Using our assumption above on floating point resources, we have `4 * 4 * 4 * 1 * 1 * 2 * 3 * 3 = 1152`. Upon testing with sim-outorder, I realised that `-commit:width`, which is part of the pipeline width, can only take in values that are powers of 2. This restricts our values of pipeline width to 3 values and a total of `864` states. Of those states, only `470` states have area less than the maximum allowed of `60.0`.
 
 However, `470` is still too large a number to be iteratively tested to find the best configuration. Hence, we have to make another assumption. If every value in config A is larger than or equals to their respective counterparts in config B, we say that config A is more optimal than config B. If no config is more optimal than config A, we say it is an optimal config. We assume that any optimal config will have an equal or faster IPC as compared to any config which is less optimal than it. Hence, this narrows us down to just `13` optimal states.
 
-With this, we can iteratively test the 44 states with a python script. All calculations and testing mentioned above can be found in the attached python script `1_tester.py`. based on the tests, the best configuration is given below, with an area of 59.04 and an IPC of 1.186. 
+With this, we can iteratively test the `13` states with a python script. All calculations and testing mentioned above can be found in the attached python script `1_tester.py`. based on the tests, the best configuration is given below, with an area of `59.04` and an IPC of `1.186`. 
 
 | Resource | P. Width | Int ALU | Int Mult | FP ALU | FP Mult | Out-of-order Issue | RUU | LSQ |
 | - | - | - | - | - | - | - | - | - |
@@ -57,6 +57,14 @@ Looking at the results, it matches our inital prediction quite well. Of the four
 In this question, we are asked to find the most efficient, highest performance per watt processor, with the same max area constraint of 60.0. In this question, we assume wattage is directly proportional to the area of the processor, so essentially we are asked to find the processor with the highest IPC/area. As such, our initial setup will be quite similar to that of Question A. However, one of our main assumptions of optimality does not hold true anymore. Our highest performing processor from the previous round has an IPC/Watt of `1.186 / 59.04 ≈ 0.0201` whilst our worst performing processor, from our minimum config has a n IPC/Watt of `0.6634 / 15.8 ≈ 0.0420`. It almost seems like there is an inverse relationship between the performance in the previous round and that of this round as area grows much faster than IPC for our processors.
 
 Hence, for this case, we use our python script in `2_tester.py` to test all `470` constrained combinations, same as that we obtained in Question A. In our results, we find that the most efficient processor is actually our minimum configuration processor at `0.0420` IPC/Watt.
+
+| Resource | P. Width | Int ALU | Int Mult | FP ALU | FP Mult | Out-of-order Issue | RUU | LSQ |
+| - | - | - | - | - | - | - | - | - |
+| Value | 1 | 1 | 1 | 1 | 1 | F | N.A. | N.A. |
+| Area | 1.8 | 2 | 3 | 4 | 5 | 0 | N.A. | N.A. |
+
+This is a reasonable result as based on [Chapter 1.4](https://acs.pub.ro/~cpop/SMPA/Computer%20Architecture%20A%20Quantitative%20Approach%20(5th%20edition).pdf), the transistor count increases more than linearly when compared to the processor performance. Hence, for every extra bit of IPC we push out of a processor, it requires an greater than linearly more amount of transistors to do so. As the number of transistors is directly correlated with power usage, power also scales more than linearly with performance increases. As such, this justifies our result that the minimum configuration chip is the best performing one.
+
 
 ### Question C:
 For this part, based on our best performing processor in Question A, we need to optimise the number of sets allocated to instruction vs data in our L1 cache based on the alloted configurations below.
