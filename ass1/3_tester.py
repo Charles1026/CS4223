@@ -25,6 +25,7 @@ def generate_ilp_command(data_sets: int, inst_sets: int) -> str:
 if __name__ == "__main__":
   ### Build all possible states ###
   states = build_ilp_state(START_POW, END_POW)
+  states += [[64, 128], [256, 128], [128, 64], [128, 256]] # Additional test cases modifying the best l1 config
   print(f"Running for configurations: {states}.")
 
   ### Test the optimal values to obtain the IPC values ###
