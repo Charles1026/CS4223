@@ -73,7 +73,7 @@ if __name__ == "__main__":
   ### Select the highest IPC as the best performance ###
   ipcs = np.asarray(ipcs)
   best_performing_idx = np.argmax(ipcs)
-  print(f"Best performing state(idx {best_performing_idx}) is: {states[best_performing_idx[0]]} data sets, {states[best_performing_idx[1]]} instruction sets and IPC of {ipcs[best_performing_idx]}.")
+  print(f"Best performing state(idx {best_performing_idx}) is: {states[best_performing_idx][0]} data sets, {states[best_performing_idx][1]} instruction sets and IPC of {ipcs[best_performing_idx]}.")
   
   
   
