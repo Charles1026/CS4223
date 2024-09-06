@@ -1,0 +1,59 @@
+## Assignment 1
+
+Xiao Zhehao, A0235422N
+
+Benchmark: compress
+
+In this assignment, I used SimpleScalar, a simulation software for RISC computer architecture to deepen my understanding of ILP.
+Based on my student number, I will be working on the compress benchmark.
+
+First, to validate that my benchmarks are running correctly, I used `srun sim-safe benchmarks/compress95.ss < benchmarks/compress95.in > benchmarks/compress95.out` to obtain the below results, from which I could assertain that my benchmark was running without issue.
+
+![Validation Image](./images/0.validation_results.jpg)
+
+### Question A:
+The goal of this part is to design the best performing architecture under the constraint that the area of the processor is less than or equal to 60, based on the constraints listed below.
+![Area Constraints Image](./images/1.area_constraints.jpg)
+
+In this question, I assume best performance to be referencing the IPC of the current architecture. The higher the IPC the better the performance. For the rest of the question, unless otherwise specified, I will use the code snippet given below to run my simulations, with <CONFIG_FILE> being the specific config file used for that simulation.
+
+```` bash
+srun sim-outorder -config <CONFIG_FILE> benchmarks/compress95.ss < benchmarks/compress95.in > benchmarks/compress95.out
+````
+
+First, I wanted to get a sensing of the current and best IPC values i could get. Thus, I ran the compress benchmark with the default configuration with area of 106.08, as seen below, to obtain an IPC of 1.6364. 
+
+| Resource | P. Width | Int ALU | Int Mult | FP ALU | FP Mult | Out-of-order Issue | RUU | LSQ |
+| - | - | - | - | - | - | - | - | - |
+| Value | 4 | 4 | 1 | 4 | 1 | T | 16 | 8 |
+| Area | 7.2 | 8 | 3 | 16 | 5 | 54.88 | 8 | 4 |
+
+I also wanted to know the minimum IPC possible so i ran it with the minimum configuration with an area of 15.8 and got an IPC of 0.6634.
+
+As seen, the area for the default configuration is too large, hence we have to decrease it to below 60 whilst minially affecting our IPC performance.
+
+To do so, we have to understand the profile of our program, mainly the frequencies of instruction classes being run. Hence, we use the command `srun sim-profile -iclass benchmarks/compress95.ss < benchmarks/compress95.in > benchmarks/compress95.out` below to obtain the summary seen below.
+
+![Area Constraints Image](./images/1.instruction_frequency.jpg)
+
+As seen from the summary above, there are almost no floating point operations. Hence, I hypothesise that reducing our floating point resources to the minimum will have almost no effect on our IPC performance. To test this, I used the default configuration with both the FP ALU and FP Multiplier values set to 1 against them set to 4 got an IPC values of `1.6362` and `1.6380`. As such, we can run with the reasonable assumption that floating point resources will not affect our IPC performance and hence they can always be set to 1 to minimise their area cost.
+
+<!-- As seen from the summary above, the bulk of instructions were store, load and integer computation. As such, I hypothesis ensuring fast loads and stores by keeping as many integer FUs and maximising the LSQ. As there are basically no floating point comuptations we should minimise the number of FP FUs. Hence, I tested the below architecture with area of 102.88 and IPC of  1.6365, a minute increase. -->
+
+<!-- | Resource | P. Width | Int ALU | Int Mult | FP ALU | FP Mult | Out-of-order Issue | RUU | LSQ |
+| - | - | - | - | - | - | - | - | - |
+| Value | 4 | 4 | 4 | 1 | 1 | T | 16 | 16 |
+| Area | 7.2 | 8 | 12 | 4 | 5 | 50.68 | 8 | 8 | -->
+
+In total, there are `4 * 4 * 4 * 4 * 4 * 2 * 3 * 3 = 18432` possible combinations of the resource values. Using our assumption above on floating point resources, we have `4 * 4 * 4 * 1 * 1 * 2 * 3 * 3 = 1152`. Upon testing with sim-outorder, I realised that `-commit:width`, which is part of the pipeline width, can only take in values that are powers of 2. This restricts our values of pipeline width to 3 values and a total of `864` states. Of those states, only `470` states have area less than the maximum allowed of `60.0`.
+
+However, `470` is still too large a number to be iteratively tested to find the best configuration. Hence, we have to make another assumption. If every value in config A is larger than or equals to their respective counterparts in config B, we say that config A is more optimal than config B. If no config is more optimal than config A, we say it is an optimal config. We assume that any optimal config will have an equal or faster IPC as compared to any config which is less optimal than it. Hence, this narrows us down to just `13` optimal states.
+
+With this, we can iteratively test the 44 states with a python script. All calculations and testing mentioned above can be found in the attached python script `1_tester.py`.
+
+Now, we need to reduce the area. As both load/store and integer computation use integer ALUs, we should favour it over integer multiplication units. Beyond that, we know that load/store instructions take quite long on average as memory access is costly. Hence, the pipeline width may not be that important as the throughput will be bottlenecked by the load/store operations regardless and decreasing it should not affect our IPC performance that much. Based on the above deductions, we try the below configuration with area of 75.52 and IPC of 
+
+| Resource | P. Width | Int ALU | Int Mult | FP ALU | FP Mult | Out-of-order Issue | RUU | LSQ |
+| - | - | - | - | - | - | - | - | - |
+| Value | 1 | 4 | 2 | 1 | 1 | T | 16 | 16 |
+| Area | 1.8 | 8 | 6 | 4 | 5 | 34.72 | 8 | 8 |
