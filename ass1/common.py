@@ -71,7 +71,7 @@ def state_to_config_values(state: np.ndarray):
   return config_values
     
 def generate_command(config_values) -> str:
-  cmd = f"srun sim-outorder -config ~/CS4223/assignment1/min.cfg " \
+  cmd = f"srun sim-outorder -config ~/CS4223/assignment1/benchmarks/default.cfg " \
     f"-decode:width {config_values[PIPELINE_WIDTH_IDX]} -issue:width {config_values[PIPELINE_WIDTH_IDX]} -commit:width {config_values[PIPELINE_WIDTH_IDX]} " \
     f"-res:ialu {config_values[INT_ALU_IDX]} " \
     f"-res:imult {config_values[INT_MULTIPLIER_IDX]} " \
