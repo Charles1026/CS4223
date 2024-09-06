@@ -33,8 +33,8 @@ VALUE_TO_CONFIG = [
   lambda state: state[FP_ALU_IDX],
   lambda state: state[FP_MULTIPLIER_IDX],
   lambda state: 0 if state[OUT_OF_ORDER_ISSUE_IDX] else 1,
-  lambda state: state[OUT_OF_ORDER_ISSUE_IDX] * (2 ** (state[REORDER_BUFFER_IDX])),
-  lambda state: state[OUT_OF_ORDER_ISSUE_IDX] * (2 ** (state[LOAD_STORE_QUEUE_IDX])),
+  lambda state: 2 ** (state[REORDER_BUFFER_IDX]),
+  lambda state: 2 ** (state[LOAD_STORE_QUEUE_IDX]),
 ]
 
 VALUE_TO_AREA = [
@@ -127,7 +127,7 @@ if __name__ == "__main__":
   optimal_config_values = []
   optimal_ipcs = []
   # Open result log file
-  with open("./res.txt", "a") as res_file:
+  with open("./res.log", "a") as res_file:
     # Establish ssh connection
     ssh = paramiko.SSHClient()
     ssh.load_system_host_keys()
@@ -144,6 +144,8 @@ if __name__ == "__main__":
       config_values = state_to_config_values(state)
       optimal_config_values.append(config_values)
       cmd = generate_command(config_values)
+      # iter.write(f"State: {state}")
+      # iter.write(f"Config Vals: {config_values}")
       # iter.write(f"Sending: {cmd}")
 
       # Send and process result
