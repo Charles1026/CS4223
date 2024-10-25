@@ -63,6 +63,10 @@ public: // static
   // call this before creating any objects to ensure the correct number of cache lines etc are constructed
   static bool initialiseStaticCacheVariables(const int cacheSize, const int associativity, const int blockSize);
 
+  static uint32_t getBlockOffset(const uint32_t address);
+  static uint32_t getSetIdx(const uint32_t address);
+  static uint32_t getTag(const uint32_t address);
+
 protected: // static
   static constexpr int INVALID_BLOCK_IDX = -1; 
 
@@ -73,8 +77,11 @@ protected: // static
   static int numBlocks;
   static int numSets;
   static int wordsPerBlock;
+  static int blockOffsetRShiftBits;
   static uint32_t blockOffsetMask;
+  static int setIdxRShiftBits;
   static uint32_t setIdxMask;
+  static int tagRShiftBits;
   static uint32_t tagMask;
 
 public:

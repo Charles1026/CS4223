@@ -16,8 +16,11 @@ int MemorySystem::blockSize = 0;
 int MemorySystem::numBlocks = 0;
 int MemorySystem::numSets = 0;
 int MemorySystem::wordsPerBlock = 0;
+int MemorySystem::blockOffsetRShiftBits = 0;
 uint32_t MemorySystem::blockOffsetMask = 0;
+int MemorySystem::setIdxRShiftBits = 0;
 uint32_t MemorySystem::setIdxMask = 0;
+int MemorySystem::tagRShiftBits = 0;
 uint32_t MemorySystem::tagMask = 0;
 
 std::string toString(CACHELINE_STATE state) {
@@ -60,6 +63,7 @@ bool MemorySystem::initialiseStaticCacheVariables(const int cacheSize, const int
   for (int i = 0; i < numBlockOffsetBits; ++i) {
     blockOffsetMask += std::pow(2, i);
   }
+  blockOffsetRShiftBits = 0;
 
   // Create Set Idx Mask
   const int numSetIndexBits = std::log2(numSets);
@@ -67,14 +71,30 @@ bool MemorySystem::initialiseStaticCacheVariables(const int cacheSize, const int
   for (int i = numBlockOffsetBits; i < numBlockOffsetBits + numSetIndexBits; ++i) {
     setIdxMask += std::pow(2, i);
   }
+  setIdxRShiftBits = numBlockOffsetBits;
+
 
   // Create Tag Mask
   tagMask = 0;
   for (int i = numBlockOffsetBits + numSetIndexBits; i < Architecture::ADDRESS_SPACE_BIT_SIZE; ++i) {
     tagMask += std::pow(2, i);
   }
+  tagRShiftBits = numBlockOffsetBits + numSetIndexBits;
 
   return true;
+}
+
+inline uint32_t MemorySystem::getBlockOffset(const uint32_t address) {
+  return (address & blockOffsetMask) >> blockOffsetRShiftBits;
+}
+
+inline uint32_t MemorySystem::getSetIdx(const uint32_t address) {
+  return (address & setIdxMask) >> setIdxRShiftBits;
+
+}
+
+inline uint32_t MemorySystem::getTag(const uint32_t address) {
+  return (address & tagMask) >> tagRShiftBits;
 }
 
 MemorySystem::MemorySystem() {
@@ -110,8 +130,8 @@ void MemorySystem::tickMemorySystem(const std::vector<MemoryRequest>& incomingMe
 }
 
 std::pair<uint32_t, int> MemorySystem::findInCache(int cacheNum, uint32_t address) const {
-  uint32_t setIdx = address & setIdxMask;
-  uint32_t tag = address & tagMask;
+  uint32_t setIdx = getSetIdx(address);
+  uint32_t tag = getTag(address);
   const std::vector<CacheLine>& set = l1Caches[cacheNum][setIdx];
   for (int i = 0; i < set.size(); ++i) {
     if ((set[i].tag == tag) && (set[i].state != INVALID)) {
@@ -184,7 +204,7 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request, std::
   if (cacheLine.state == MODIFIED) { // if modified, we need to write back the dirty cache line first, so we add the cycles to the initial cycles needed
     startingCycles += getAndLog_L1_CACHE_WRITE_BACK_CYCLES();
   }
-  cacheLine.tag = request.address & tagMask; // set tag
+  cacheLine.tag = getTag(request.address); // set tag
   cacheLine.state = INVALID; // set state
   // Enqueue bus transaction
   queuedBusTransactions.emplace((request.type == Architecture::INSTRUCTION_TYPE::LOAD) ? BusTransaction::BUS_RD : BusTransaction::BUS_RD_X, request, setIdx, blockIdx, startingCycles);

@@ -40,11 +40,6 @@ void CPU::simulate() {
         continue; // do nothing if already completed
       }
 
-      if (core.currInst >= core.instructions.size()) { // just completed, set to completed and idle until all processors complete
-        core.state = COMPLETED;
-        continue;
-      }
-
       Architecture::Instruction& instruction = core.instructions[core.currInst];
       ++instruction.executionCycles; // increment execution cycles of instruction
 
@@ -64,7 +59,7 @@ void CPU::simulate() {
         if (instruction.executionCycles >= instruction.computeCycles) { // complete execution of compute
           Architecture::GlobalReport::computeCycles[coreIdx] += instruction.executionCycles;
           ++core.currInst;
-          core.state = (core.currInst >= core.instructions.size()) ? COMPLETED : LOADING;
+          core.state = (core.currInst >= core.instructions.size()) ? COMPLETED : LOADING; // set state to completed if instructions finished, else set state to loading
         }
       }
     }
@@ -77,7 +72,7 @@ void CPU::simulate() {
       // Report idle cycles
       Architecture::GlobalReport::idleCycles[request.coreNum] += core.instructions[core.currInst].executionCycles;
       ++core.currInst;
-      core.state = (core.currInst >= core.instructions.size()) ? COMPLETED : LOADING;
+      core.state = (core.currInst >= core.instructions.size()) ? COMPLETED : LOADING; // set state to completed if instructions finished, else set state to loading
     }
     Architecture::GlobalCycleCounter::incrementCounter(); // increment global cycle Counter
   }

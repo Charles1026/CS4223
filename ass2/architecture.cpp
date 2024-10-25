@@ -39,7 +39,7 @@ void parseInstructionsFromFile(const std::string file, std::vector<Architecture:
 
     // Parse value
     try {
-      intValue = std::stoi(label, nullptr, 16);
+      intValue = std::stoi(value, nullptr, 16);
     } catch (const std::exception& e) {
       std::fprintf(stderr, "Failed to parse value %s: %s\n", value.c_str(), e.what());
       return;
@@ -110,6 +110,7 @@ std::ostream& printGlobalReport(std::ostream& os) {
 
 
 bool loadInstructionsFromFiles(const std::string& fileName, std::array<std::vector<Architecture::Instruction>, NUM_CORES>& instructionsByCore)  {
+  std::cout << "Loading Instructions...\n";
   std::array<std::string, NUM_CORES>paths;
   std::array<std::thread, NUM_CORES> loadThreads;
   std::array<bool, NUM_CORES> successes;
