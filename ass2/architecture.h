@@ -11,7 +11,7 @@ namespace Architecture {
 constexpr int ADDRESS_SPACE_BIT_SIZE = 32;
 constexpr int WORD_SIZE_BYTES = 4;
 constexpr char DATA_FOLDER[] = "data";
-constexpr int NUM_CORES = 1;
+constexpr int NUM_CORES = 4;
 
 class GlobalCycleCounter {   
 public:

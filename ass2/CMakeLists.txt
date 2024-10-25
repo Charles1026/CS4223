@@ -8,6 +8,8 @@ project(coherence)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+file(GLOB_RECURSE HEADER_FILES "*.h")
+
 set(SOURCE_FILES
   ${CMAKE_SOURCE_DIR}/architecture.cpp
   ${CMAKE_SOURCE_DIR}/cache.cpp
@@ -15,7 +17,8 @@ set(SOURCE_FILES
 )
 
 # Add an executable (for a simple project with main.cpp)
-add_executable(coherence 
+add_executable(coherence
+  ${HEADER_FILES}
   ${SOURCE_FILES}
   main.cpp
 )

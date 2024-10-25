@@ -6,11 +6,12 @@
 #include <fstream>
 #include <iostream>
 #include <format>
+#include <thread>
 
 namespace Archi = Architecture;
 
 namespace {
-inline void parseInstructionsFromFile(const std::string& file, std::vector<Architecture::Instruction>& instructions, bool& success) {
+void parseInstructionsFromFile(const std::string file, std::vector<Architecture::Instruction>& instructions, bool& success) {
   success = false; // start with fail, set to true if all done
   std::ifstream fileStream(file);
   if (!fileStream.is_open()) {
@@ -46,8 +47,6 @@ inline void parseInstructionsFromFile(const std::string& file, std::vector<Archi
 
     instructions.emplace_back(type, intValue);
   }
-
-  std::cout << "Loaded " << instructions.size() << " instructions from " << file << '\n';
   success = true; // successfully parsed
 }
 } // anonymouse namespace
@@ -85,14 +84,19 @@ std::ostream& printGlobalReport(std::ostream& os) {
   os << "Report:\nOverall Execution Cycles: " << GlobalReport::overallExecutionCycles << '\n';
   for (int coreNum = 0; coreNum < NUM_CORES ; ++coreNum) {
     os << "Core " << coreNum << '\n';
-    os << "\tNum Compute Inst: " << GlobalReport::numComputeInstructions[coreNum] << '\n';
-    os << "\tCompute Cycles: " << GlobalReport::computeCycles[coreNum] << '\n';
-    os << "\tNum Load Store Inst: " << GlobalReport::numLoadStoreInstructions[coreNum] << '\n';
-    os << "\tIdle Cycles: " << GlobalReport::idleCycles[coreNum] << '\n';
-    os << "\tNum Cache Hits: " << GlobalReport::numCacheHits[coreNum] << '\n';
-    os << "\tNum Cache Misses: " << GlobalReport::numCacheMisses[coreNum] << '\n';
+    os << "\tTotal Instructions: " << GlobalReport::numComputeInstructions[coreNum] + GlobalReport::numLoadStoreInstructions[coreNum] << '\n';
+    os << "\t\tNum Compute Inst: " << GlobalReport::numComputeInstructions[coreNum] << '\n';
+    os << "\t\tNum Load Store Inst: " << GlobalReport::numLoadStoreInstructions[coreNum] << '\n';
+
+    os << "\tTotal Execution Cycles: " << GlobalReport::computeCycles[coreNum] + GlobalReport::idleCycles[coreNum] << '\n';
+    os << "\t\tCompute Cycles: " << GlobalReport::computeCycles[coreNum] << '\n';
+    os << "\t\tIdle Cycles: " << GlobalReport::idleCycles[coreNum] << '\n';
+
     os << "\tCache Hit Rate: " << float(GlobalReport::numCacheHits[coreNum]) / float(GlobalReport::numCacheHits[coreNum] + GlobalReport::numCacheMisses[coreNum]) << '\n';
+    os << "\t\tNum Cache Hits: " << GlobalReport::numCacheHits[coreNum] << '\n';
+    os << "\t\tNum Cache Misses: " << GlobalReport::numCacheMisses[coreNum] << '\n';
   }
+  os << '\n';
   os << "Total Bus Data Traffic (Bytes): " << GlobalReport::busDataTrafficBytes << '\n';
   os << "Total Bus Invalidations/Updates: " << GlobalReport::busInvalidationsOrUpdates << '\n';  
   os << "Total Private Data Access: " << GlobalReport::numPrivateAccess << '\n';
@@ -106,12 +110,27 @@ std::ostream& printGlobalReport(std::ostream& os) {
 
 
 bool loadInstructionsFromFiles(const std::string& fileName, std::array<std::vector<Architecture::Instruction>, NUM_CORES>& instructionsByCore)  {
-  bool success = true;
+  std::array<std::string, NUM_CORES>paths;
+  std::array<std::thread, NUM_CORES> loadThreads;
+  std::array<bool, NUM_CORES> successes;
+  successes.fill(false);
   for (int coreNum = 0; coreNum < NUM_CORES; ++coreNum) {
     std::filesystem::path filePath = std::filesystem::current_path();
     filePath = filePath / DATA_FOLDER / std::format("{}_{}.data", fileName, coreNum);
-    parseInstructionsFromFile(filePath.string(), instructionsByCore[coreNum], success);
-    if (!success) break;
+    paths[coreNum] = filePath.string(); 
+    loadThreads[coreNum] = std::move(std::thread(parseInstructionsFromFile, paths[coreNum], std::ref(instructionsByCore[coreNum]), std::ref(successes[coreNum])));
+  }
+
+  bool success = true;
+  for (int coreNum = 0; coreNum < NUM_CORES; ++coreNum) {
+    loadThreads[coreNum].join();
+    if (successes[coreNum]) {
+      std::cout << "Core " << coreNum << " loaded " << instructionsByCore[coreNum].size() << " instructions from " << paths[coreNum] << '\n';
+    }
+    else {
+      std::cout << "Core " << coreNum << " failed to load instructions from " << paths[coreNum] << '\n';
+    }
+    success &= successes[coreNum];
   }
   return success;
 }

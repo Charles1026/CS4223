@@ -82,7 +82,7 @@ MemorySystem::MemorySystem() {
   for (std::vector<std::vector<CacheLine>>& cache : l1Caches) {
     cache = std::vector<std::vector<CacheLine>>(numSets, std::vector<CacheLine>(associativity));
   }
-  printf("Initialised L1 Caches of %d bytes with %d associativity, %d blocks of %d bytes or %d words, grouped in %d sets.\n", cacheSize, associativity, numBlocks, blockSize, wordsPerBlock, numSets);
+  printf("Initialised %zu L1 Caches of %d bytes with %d associativity, %d blocks of %d bytes or %d words, grouped in %d sets.\n", l1Caches.size(), cacheSize, associativity, numBlocks, blockSize, wordsPerBlock, numSets);
 }
 
 void MemorySystem::tickMemorySystem(const std::vector<MemoryRequest>& incomingMemoryRequests, std::vector<MemoryRequest>& completedMemoryRequests) {

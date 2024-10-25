@@ -78,9 +78,10 @@ void CPU::simulate() {
     for (const Cache::MemoryRequest& request : completedMemoryRequests) {
       Core& core = m_cores[request.coreNum];
       // Report idle cycles
-      {
+      if (core.currInst < core.instructions.size()) {
         Architecture::GlobalReport::idleCycles[request.coreNum] += core.instructions[core.currInst].executionCycles;
-
+      } else {
+        //fprintf(stderr, "Core %d tried to access instruction index %d of instructions sized %zu\n", request.coreNum, core.currInst, core.instructions.size());
       }
       core.state = LOADING;
       ++core.currInst;
