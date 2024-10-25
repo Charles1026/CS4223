@@ -96,7 +96,7 @@ protected:
   int findBlockIdxToReplace(const int coreNum, const uint32_t setIdx) const;
 
   // Resolves request if no need for bus transaction, else adds to the bus transaction queue
-  virtual void handleIncomingRequest(const MemoryRequest& request, std::vector<MemoryRequest>& completedMemoryRequests) = 0;
+  virtual void handleIncomingRequest(const MemoryRequest& request) = 0;
   virtual void processBusTransaction(BusTransaction& transaction) = 0;
 
   // For Report
@@ -121,8 +121,9 @@ protected:
   }
 
 protected:
-  std::array<std::vector<std::vector<CacheLine>>, Architecture::NUM_CORES> l1Caches;
-  std::queue<BusTransaction> queuedBusTransactions;
+  std::array<std::vector<std::vector<CacheLine>>, Architecture::NUM_CORES> m_l1Caches;
+  std::queue<BusTransaction> m_queuedBusTransactions; // for requests that require a bus transaction, can only execute in serial
+  std::vector<std::pair<MemoryRequest, int>> m_executingNonBusRequests; // for requests that dont need a bus transaction(cache hit no bus transaction), can execute in parallel
 };
 
 class MesiMemorySystem : public MemorySystem {
@@ -130,7 +131,7 @@ public:
   MesiMemorySystem() = default;
 
 protected:
-  void handleIncomingRequest(const MemoryRequest& request, std::vector<MemoryRequest>& completedMemoryRequests) override;
+  void handleIncomingRequest(const MemoryRequest& request) override;
   void processBusTransaction(BusTransaction& transaction) override;
 
 };
@@ -140,7 +141,7 @@ public:
   DragonMemorySystem() = default;
 
 protected:
-  void handleIncomingRequest(const MemoryRequest& request, std::vector<MemoryRequest>& completedMemoryRequests) override;
+  void handleIncomingRequest(const MemoryRequest& request) override;
   void processBusTransaction(BusTransaction& transaction) override;
 
 };

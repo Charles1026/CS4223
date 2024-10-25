@@ -99,40 +99,53 @@ inline uint32_t MemorySystem::getTag(const uint32_t address) {
 
 MemorySystem::MemorySystem() {
   // Initialise caches to the right size
-  for (std::vector<std::vector<CacheLine>>& cache : l1Caches) {
+  for (std::vector<std::vector<CacheLine>>& cache : m_l1Caches) {
     cache = std::vector<std::vector<CacheLine>>(numSets, std::vector<CacheLine>(associativity));
   }
-  printf("Initialised %zu L1 Caches of %d bytes with %d associativity, %d blocks of %d bytes or %d words, grouped in %d sets.\n", l1Caches.size(), cacheSize, associativity, numBlocks, blockSize, wordsPerBlock, numSets);
+  printf("Initialised %zu L1 Caches of %d bytes with %d associativity, %d blocks of %d bytes or %d words, grouped in %d sets.\n", m_l1Caches.size(), cacheSize, associativity, numBlocks, blockSize, wordsPerBlock, numSets);
 }
 
 void MemorySystem::tickMemorySystem(const std::vector<MemoryRequest>& incomingMemoryRequests, std::vector<MemoryRequest>& completedMemoryRequests) {
   // Handle incoming requests
   for (const auto& request : incomingMemoryRequests) {
-    handleIncomingRequest(request, completedMemoryRequests);
+    handleIncomingRequest(request);
+  }
+
+  // Process Executing Non Bus Memory Requests
+  if (!m_executingNonBusRequests.empty()) {
+    std::vector<std::pair<MemoryRequest, int>> newExecuting;
+    for (int i = 0; i < m_executingNonBusRequests.size(); ++i) {
+      auto& [request, remainingCycles] = m_executingNonBusRequests[i];
+      --remainingCycles;
+      if (remainingCycles <= 0) {
+        completedMemoryRequests.push_back(request);
+      } else {
+        newExecuting.emplace_back(request, remainingCycles);
+      }
+    }
+    m_executingNonBusRequests = std::move(newExecuting); // override with new list
   }
 
   // Handle bus transaction
-  if (queuedBusTransactions.empty()) {
-    return;
-  }
-
-  BusTransaction& currBusTransaction = queuedBusTransactions.front();
-  if (!currBusTransaction.processed) { // new bus transaction process it
-    processBusTransaction(currBusTransaction);
-  } 
+  if (!m_queuedBusTransactions.empty()) {
+    BusTransaction& currBusTransaction = m_queuedBusTransactions.front();
+    if (!currBusTransaction.processed) { // new bus transaction process it
+      processBusTransaction(currBusTransaction);
+    } 
   
-  --currBusTransaction.remainingCycles; // execute 1 cycle of the curr bus transaction
+    --currBusTransaction.remainingCycles; // execute 1 cycle of the curr bus transaction
   
-  if (currBusTransaction.remainingCycles == 0) { // curr bus transaction completed add to completed and remove from queue
-    completedMemoryRequests.push_back(currBusTransaction.request);
-    queuedBusTransactions.pop();
+    if (currBusTransaction.remainingCycles == 0) { // curr bus transaction completed add to completed and remove from queue
+      completedMemoryRequests.push_back(currBusTransaction.request);
+      m_queuedBusTransactions.pop();
+    }
   }
 }
 
 std::pair<uint32_t, int> MemorySystem::findInCache(int cacheNum, uint32_t address) const {
   uint32_t setIdx = getSetIdx(address);
   uint32_t tag = getTag(address);
-  const std::vector<CacheLine>& set = l1Caches[cacheNum][setIdx];
+  const std::vector<CacheLine>& set = m_l1Caches[cacheNum][setIdx];
   for (int i = 0; i < set.size(); ++i) {
     if ((set[i].tag == tag) && (set[i].state != INVALID)) {
       return {setIdx, i};
@@ -145,7 +158,7 @@ int MemorySystem::findBlockIdxToReplace(const int coreNum, const uint32_t setIdx
   int earliestLastUsed = std::numeric_limits<int>::max();
   int minIdx = -1;
   for (int blockIdx = 0; blockIdx < associativity; ++blockIdx) {
-    const CacheLine& cacheLine = l1Caches[coreNum][setIdx][blockIdx];
+    const CacheLine& cacheLine = m_l1Caches[coreNum][setIdx][blockIdx];
     if (cacheLine.state == INVALID) { // return immediately if there is an invalid cache line
       return blockIdx;
     }
@@ -157,13 +170,13 @@ int MemorySystem::findBlockIdxToReplace(const int coreNum, const uint32_t setIdx
   return minIdx; // return least recently used block
 }
 
-void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request, std::vector<MemoryRequest>& completedMemoryRequests) {
+void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request) {
   auto [setIdx, blockIdx] = findInCache(request.coreNum, request.address);
   ////// in cache //////
   if (blockIdx != INVALID_BLOCK_IDX) {
     ++Architecture::GlobalReport::numCacheHits[request.coreNum];
 
-    CacheLine& cacheLine = l1Caches[request.coreNum][setIdx][blockIdx];
+    CacheLine& cacheLine = m_l1Caches[request.coreNum][setIdx][blockIdx];
     // Load Request: All laods from valid cache lines happen without bus transaction and state change
     if (request.type == Architecture::INSTRUCTION_TYPE::LOAD) {
       if (cacheLine.state == SHARED) {
@@ -173,7 +186,7 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request, std::
       }
 
       cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
-      completedMemoryRequests.push_back(request);
+      m_executingNonBusRequests.emplace_back(request, L1_CACHE_HIT_CYCLES);
       return;
     }
 
@@ -183,14 +196,14 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request, std::
 
       cacheLine.state = MODIFIED; // write changes exclusive to modified state, modified stays as modified
       cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
-      completedMemoryRequests.push_back(request);
+      m_executingNonBusRequests.emplace_back(request, L1_CACHE_HIT_CYCLES);
       return;
     }
 
     // Shared State Store Request: Need to invalidate all other cache lines through bus transaction, add to bus transaction queue
     ++Architecture::GlobalReport::numSharedAccess;
 
-    queuedBusTransactions.emplace(BusTransaction::BUS_RD_X, request, setIdx, blockIdx);
+    m_queuedBusTransactions.emplace(BusTransaction::BUS_RD_X, request, setIdx, blockIdx);
     return;
   }
 
@@ -198,7 +211,7 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request, std::
   ++Architecture::GlobalReport::numCacheMisses[request.coreNum];
 
   blockIdx = findBlockIdxToReplace(request.coreNum, setIdx);
-  CacheLine& cacheLine = l1Caches[request.coreNum][setIdx][blockIdx];
+  CacheLine& cacheLine = m_l1Caches[request.coreNum][setIdx][blockIdx];
   // We evict the cache line and prepare to load in the new cache line through a bus transaction
   int startingCycles = 0;
   if (cacheLine.state == MODIFIED) { // if modified, we need to write back the dirty cache line first, so we add the cycles to the initial cycles needed
@@ -207,12 +220,12 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request, std::
   cacheLine.tag = getTag(request.address); // set tag
   cacheLine.state = INVALID; // set state
   // Enqueue bus transaction
-  queuedBusTransactions.emplace((request.type == Architecture::INSTRUCTION_TYPE::LOAD) ? BusTransaction::BUS_RD : BusTransaction::BUS_RD_X, request, setIdx, blockIdx, startingCycles);
+  m_queuedBusTransactions.emplace((request.type == Architecture::INSTRUCTION_TYPE::LOAD) ? BusTransaction::BUS_RD : BusTransaction::BUS_RD_X, request, setIdx, blockIdx, startingCycles);
 }
 
 void MesiMemorySystem::processBusTransaction(BusTransaction& transaction) {
   int initiatingCoreIdx = transaction.request.coreNum;
-  CacheLine& cacheLine = l1Caches[initiatingCoreIdx][transaction.setIdx][transaction.blockIdx];
+  CacheLine& cacheLine = m_l1Caches[initiatingCoreIdx][transaction.setIdx][transaction.blockIdx];
   
   // Bus Read Transaction only possible if loading from an invalid state
   if (transaction.type == BusTransaction::BUS_RD) {
@@ -222,7 +235,7 @@ void MesiMemorySystem::processBusTransaction(BusTransaction& transaction) {
       if (otherCoreIdx == initiatingCoreIdx) continue; // dont check self
       auto [otherSetIdx, otherBlockIdx] = findInCache(otherCoreIdx, transaction.request.address);
       if (otherBlockIdx == INVALID_BLOCK_IDX) continue; // not in the other cache, continue
-      CacheLine& otherCacheLine = l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
+      CacheLine& otherCacheLine = m_l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
 
       // NOTE: FALLTHROUGHS HERE ARE INTENTIONAL FOR THE LOGIC 
       switch (otherCacheLine.state) {
@@ -267,7 +280,7 @@ void MesiMemorySystem::processBusTransaction(BusTransaction& transaction) {
       if (otherCoreIdx == initiatingCoreIdx) continue; // dont check self
       auto [otherSetIdx, otherBlockIdx] = findInCache(otherCoreIdx, transaction.request.address);
       if (otherBlockIdx == INVALID_BLOCK_IDX) continue; // not in the other cache, continue
-      CacheLine& otherCacheLine = l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
+      CacheLine& otherCacheLine = m_l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
 
       if (otherCacheLine.state == MODIFIED) { // The other cache line is dirty, we need to write it back to memory
         transaction.remainingCycles += getAndLog_L1_CACHE_WRITE_BACK_CYCLES();
@@ -288,7 +301,7 @@ void MesiMemorySystem::processBusTransaction(BusTransaction& transaction) {
   transaction.processed = true; // set to processed 
 }
 
-void DragonMemorySystem::handleIncomingRequest(const MemoryRequest& request, std::vector<MemoryRequest>& completedMemoryRequests) {
+void DragonMemorySystem::handleIncomingRequest(const MemoryRequest& request) {
 
 }
 
