@@ -63,8 +63,8 @@ void CPU::simulate() {
       if (core.state == EXECUTING) {
         if (instruction.executionCycles >= instruction.computeCycles) { // complete execution of compute
           Architecture::GlobalReport::computeCycles[coreIdx] += instruction.executionCycles;
-          core.state = LOADING; // set state to be loading nxt instruction
           ++core.currInst;
+          core.state = (core.currInst >= core.instructions.size()) ? COMPLETED : LOADING;
         }
       }
     }
@@ -76,8 +76,8 @@ void CPU::simulate() {
       Core& core = m_cores[request.coreNum];
       // Report idle cycles
       Architecture::GlobalReport::idleCycles[request.coreNum] += core.instructions[core.currInst].executionCycles;
-      core.state = LOADING;
       ++core.currInst;
+      core.state = (core.currInst >= core.instructions.size()) ? COMPLETED : LOADING;
     }
     Architecture::GlobalCycleCounter::incrementCounter(); // increment global cycle Counter
   }
