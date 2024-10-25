@@ -2,8 +2,6 @@
 #include "architecture.h"
 #include "cache.h"
 
-#include <memory>
-
 
 namespace Processor {
 
@@ -42,23 +40,26 @@ void CPU::simulate() {
         continue; // do nothing if already completed
       }
 
+      if (core.currInst >= core.instructions.size()) { // just completed, set to completed and idle until all processors complete
+        core.state = COMPLETED;
+        continue;
+      }
+
+      Architecture::Instruction& instruction = core.instructions[core.currInst];
+      ++instruction.executionCycles; // increment execution cycles of instruction
+
       if (core.state == LOADING) {
         // core has finished executing, set to completed and continue
-        if (core.currInst >= core.instructions.size()) {
-          core.state = COMPLETED;
-          continue;
-        }
         if (core.instructions[core.currInst].instType == Architecture::COMPUTE) {
           ++Architecture::GlobalReport::numComputeInstructions[coreIdx];
           core.state = EXECUTING;
         } else if (core.instructions[core.currInst].instType == Architecture::LOAD || core.instructions[core.currInst].instType == Architecture::STORE) {
           ++Architecture::GlobalReport::numLoadStoreInstructions[coreIdx];
+          pendingMemoryRequests.emplace_back(coreIdx, instruction.instType, instruction.dataAddress); // enqueue memory request
           core.state = BLOCKED;
         }
       }
 
-      Architecture::Instruction& instruction = core.instructions[core.currInst];
-      ++instruction.executionCycles; // increment execution cycles of instruction
       if (core.state == EXECUTING) {
         if (instruction.executionCycles >= instruction.computeCycles) { // complete execution of compute
           Architecture::GlobalReport::computeCycles[coreIdx] += instruction.executionCycles;
@@ -66,10 +67,6 @@ void CPU::simulate() {
           ++core.currInst;
         }
       }
-
-      if (core.state == BLOCKED) {
-        pendingMemoryRequests.emplace_back(coreIdx, instruction.instType, instruction.dataAddress);
-      }    
     }
 
     m_memorySystemPtr->tickMemorySystem(pendingMemoryRequests, completedMemoryRequests);
@@ -78,11 +75,7 @@ void CPU::simulate() {
     for (const Cache::MemoryRequest& request : completedMemoryRequests) {
       Core& core = m_cores[request.coreNum];
       // Report idle cycles
-      if (core.currInst < core.instructions.size()) {
-        Architecture::GlobalReport::idleCycles[request.coreNum] += core.instructions[core.currInst].executionCycles;
-      } else {
-        //fprintf(stderr, "Core %d tried to access instruction index %d of instructions sized %zu\n", request.coreNum, core.currInst, core.instructions.size());
-      }
+      Architecture::GlobalReport::idleCycles[request.coreNum] += core.instructions[core.currInst].executionCycles;
       core.state = LOADING;
       ++core.currInst;
     }
