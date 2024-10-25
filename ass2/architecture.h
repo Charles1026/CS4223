@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -10,7 +11,7 @@ namespace Architecture {
 
 constexpr int ADDRESS_SPACE_BIT_SIZE = 32;
 constexpr int WORD_SIZE_BYTES = 4;
-constexpr char DATA_FOLDER[] = "data";
+constexpr char DEFAULT_DATA_FOLDER[] = "data";
 constexpr int NUM_CORES = 1;
 
 class GlobalCycleCounter {   
@@ -56,5 +57,5 @@ struct Instruction {
   Instruction(INSTRUCTION_TYPE type, int value) : instType(type), dataAddress((type == LOAD || type == STORE) ? value : 0), computeCycles((type == COMPUTE) ? value : 0) {}
 };
 
-bool loadInstructionsFromFiles(const std::string& fileName, std::array<std::vector<Architecture::Instruction>, NUM_CORES>& instructionsByCore);
+bool loadInstructionsFromFiles(const std::filesystem::path& directory, const std::string& fileName, std::array<std::vector<Architecture::Instruction>, NUM_CORES>& instructionsByCore);
 } // namespce

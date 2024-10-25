@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cstdio>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <format>
@@ -49,7 +48,7 @@ void parseInstructionsFromFile(const std::string file, std::vector<Architecture:
   }
   success = true; // successfully parsed
 }
-} // anonymouse namespace
+} // anonymous namespace
 
 namespace Architecture {
 int GlobalCycleCounter::counter = 0;
@@ -109,15 +108,14 @@ std::ostream& printGlobalReport(std::ostream& os) {
 }
 
 
-bool loadInstructionsFromFiles(const std::string& fileName, std::array<std::vector<Architecture::Instruction>, NUM_CORES>& instructionsByCore)  {
+bool loadInstructionsFromFiles(const std::filesystem::path& directory, const std::string& fileName, std::array<std::vector<Architecture::Instruction>, NUM_CORES>& instructionsByCore)  {
   std::cout << "Loading Instructions...\n";
   std::array<std::string, NUM_CORES>paths;
   std::array<std::thread, NUM_CORES> loadThreads;
   std::array<bool, NUM_CORES> successes;
   successes.fill(false);
   for (int coreNum = 0; coreNum < NUM_CORES; ++coreNum) {
-    std::filesystem::path filePath = std::filesystem::current_path();
-    filePath = filePath / DATA_FOLDER / std::format("{}_{}.data", fileName, coreNum);
+    std::filesystem::path filePath = directory / std::format("{}_{}.data", fileName, coreNum);
     paths[coreNum] = filePath.string(); 
     loadThreads[coreNum] = std::move(std::thread(parseInstructionsFromFile, paths[coreNum], std::ref(instructionsByCore[coreNum]), std::ref(successes[coreNum])));
   }

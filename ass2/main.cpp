@@ -24,8 +24,8 @@ namespace {
 
 
 int main(int argc, char *argv[]) {
-  if (argc != 6) {
-    std::fprintf(stderr, "Invalid Usage, please input ./coherence <protocol> <input_file> <cache_size> <associativity> <block_size>\n");
+  if (argc < 6) {
+    std::fprintf(stderr, "Invalid Usage, please input ./coherence <protocol> <input_file> <cache_size> <associativity> <block_size> [data_folder]\n");
     return 1;
   }
 
@@ -64,10 +64,18 @@ int main(int argc, char *argv[]) {
 
   Cache::MemorySystem::initialiseStaticCacheVariables(cacheSize, associativity, blockSize); // initialise static cache sizing variables, needed in l1 cache constructor
 
+  // Get data folder if applicable
+  std::filesystem::path dataFolder;
+  if (argc >= 7) {
+    dataFolder = argv[6];
+  } else {
+    dataFolder = std::filesystem::current_path() / Architecture::DEFAULT_DATA_FOLDER;
+  }
+
   // Parse input file
   std::string inputFileName = argv[2];
   std::array<std::vector<Architecture::Instruction>, Architecture::NUM_CORES> instructionsByCore;
-  if (!Architecture::loadInstructionsFromFiles(inputFileName, instructionsByCore)) {
+  if (!Architecture::loadInstructionsFromFiles(dataFolder, inputFileName, instructionsByCore)) {
     std::fprintf(stderr, "Error: Failed to parse input file(s) %s\n", argv[2]);
     return 1;
   }
