@@ -201,7 +201,7 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request) {
     }
 
     // Shared State Store Request: Need to invalidate all other cache lines through bus transaction, add to bus transaction queue
-    m_queuedBusTransactions.emplace(BusTransaction::BUS_RD_X, request, setIdx, blockIdx);
+    m_queuedBusTransactions.emplace(request, setIdx, blockIdx);
     return;
   }
 
@@ -219,43 +219,46 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request) {
   cacheLine.state = INVALID; // set state
   cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
   // Enqueue bus transaction
-  m_queuedBusTransactions.emplace((request.type == Architecture::INSTRUCTION_TYPE::LOAD) ? BusTransaction::BUS_RD : BusTransaction::BUS_RD_X, request, setIdx, blockIdx, startingCycles);
+  m_queuedBusTransactions.emplace(request, setIdx, blockIdx, startingCycles);
 }
 
 void MesiMemorySystem::processBusTransaction(BusTransaction& transaction) {
   int initiatingCoreIdx = transaction.request.coreNum;
   CacheLine& cacheLine = m_l1Caches[initiatingCoreIdx][transaction.setIdx][transaction.blockIdx];
   
-  // Bus Read Transaction only possible if loading from an invalid state
-  if (transaction.type == BusTransaction::BUS_RD) {
+  // Load only issues bus transaction if loading from Invalid state
+  if (transaction.request.type == Architecture::LOAD) {
     // check other caches for a valid copy of the cache line
     bool foundOtherCopy = false;
     for (int otherCoreIdx = 0; otherCoreIdx < Architecture::NUM_CORES; ++otherCoreIdx) {
       if (otherCoreIdx == initiatingCoreIdx) continue; // dont check self
       auto [otherSetIdx, otherBlockIdx] = findInCache(otherCoreIdx, transaction.request.address);
       if (otherBlockIdx == INVALID_BLOCK_IDX) continue; // not in the other cache, continue
+      
+      // Cache line found in other cache
+      ++Architecture::GlobalReport::numSharedAccess;
+      foundOtherCopy = true;
       CacheLine& otherCacheLine = m_l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
 
       // NOTE: FALLTHROUGHS HERE ARE INTENTIONAL FOR THE LOGIC 
       switch (otherCacheLine.state) {
       case MODIFIED: // we need to write back the dirty cache line
         transaction.remainingCycles += getAndLog_L1_CACHE_WRITE_BACK_CYCLES();
-
+        [[fallthrough]];
       case EXCLUSIVE:
+        [[fallthrough]];
       case SHARED:
         // All 3 states need to share their cache line with the requesting cache
-        transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_BLOCK_FROM_BUS_CYCLES() + L1_CACHE_HIT_CYCLES;
+        transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_BLOCK_FROM_BUS_CYCLES() + L1_CACHE_HIT_CYCLES; // get block from other cache line
         break;
 
       default:
         fprintf(stderr, "Error at %s, %s: invalid other cache state reached!", __FILE__, __func__);
         break;
       }
-      ++Architecture::GlobalReport::numSharedAccess;
 
       cacheLine.state = SHARED; // transition self state to shared
       otherCacheLine.state = SHARED; // the other cache line transitions to shared from any of modified/exclusive/shared
-      foundOtherCopy = true;
       break; // if we reach here means we have obtained a copy from a cache already, no need to continue search 
     }
 
@@ -268,29 +271,41 @@ void MesiMemorySystem::processBusTransaction(BusTransaction& transaction) {
     }
   } 
 
-  // Bus Read X Transaction possible through storing from invalid or shared state
+  // Store issues bus transaction when storing from invalid or shared state
   else {
     ++Architecture::GlobalReport::busInvalidationsOrUpdates;
-    ++Architecture::GlobalReport::numPrivateAccess;
 
     // There could be other caches holding this line, need to invalidate all of them first
     bool foundOtherCopy = false;
+    bool hasCacheLine = cacheLine.state != INVALID;
     for (int otherCoreIdx = 0; otherCoreIdx < Architecture::NUM_CORES; ++otherCoreIdx) {
       if (otherCoreIdx == initiatingCoreIdx) continue; // dont check self
       auto [otherSetIdx, otherBlockIdx] = findInCache(otherCoreIdx, transaction.request.address);
       if (otherBlockIdx == INVALID_BLOCK_IDX) continue; // not in the other cache, continue
+
+      // Cache line found in other cache
+      
+      foundOtherCopy = true;
       CacheLine& otherCacheLine = m_l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
 
       if (otherCacheLine.state == MODIFIED) { // The other cache line is dirty, we need to write it back to memory
         transaction.remainingCycles += getAndLog_L1_CACHE_WRITE_BACK_CYCLES();
       }
+
+      if (!hasCacheLine) { // if we dont have the cache line, we need to get the block from other cache line
+        transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_BLOCK_FROM_BUS_CYCLES();
+        hasCacheLine = true;
+      }
       otherCacheLine.state = INVALID; // invalidate other cache line
-      foundOtherCopy = true;
     }
 
-    // if our state is invalid we need to get the cache line either from memory or another cache
-    if (cacheLine.state == INVALID) {
-      transaction.remainingCycles += foundOtherCopy ? getAndLog_L1_CACHE_LOAD_BLOCK_FROM_BUS_CYCLES() : getAndLog_L1_CACHE_LOAD_FROM_MEM_CYCLES();
+    // Log Memory Access Type
+    if (foundOtherCopy) ++Architecture::GlobalReport::numSharedAccess;
+    else ++Architecture::GlobalReport::numPrivateAccess;
+
+    // no cache(including us) has the cache line, we need to get the cache line from memory
+    if (!hasCacheLine) {
+      transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_FROM_MEM_CYCLES();
     }
     
     cacheLine.state = MODIFIED; // set self to modified state
@@ -301,11 +316,153 @@ void MesiMemorySystem::processBusTransaction(BusTransaction& transaction) {
 }
 
 void DragonMemorySystem::handleIncomingRequest(const MemoryRequest& request) {
+  auto [setIdx, blockIdx] = findInCache(request.coreNum, request.address);
+  ////// in cache //////
+  if (blockIdx != INVALID_BLOCK_IDX) {
+    ++Architecture::GlobalReport::numCacheHits[request.coreNum];
 
+    CacheLine& cacheLine = m_l1Caches[request.coreNum][setIdx][blockIdx];
+    // Load Request: All loads from valid cache lines happen without bus transaction and state change
+    if (request.type == Architecture::INSTRUCTION_TYPE::LOAD) {
+      if (cacheLine.state == SHARED_CLEAN || cacheLine.state == SHARED_MODIFIED) {
+        ++Architecture::GlobalReport::numSharedAccess;
+      }
+      else {
+        ++Architecture::GlobalReport::numPrivateAccess;
+      }
+
+      cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
+      m_executingNonBusRequests.emplace_back(request, L1_CACHE_HIT_CYCLES);
+      return;
+    }
+
+    // Exclusive/Modified State Store Request: can write and return immediately
+    if (cacheLine.state == EXCLUSIVE || cacheLine.state == MODIFIED) {
+      ++Architecture::GlobalReport::numPrivateAccess;
+
+      cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
+      m_executingNonBusRequests.emplace_back(request, L1_CACHE_HIT_CYCLES);
+      return;
+    }
+
+    // Shared_Clean/Shared_Modified State Store Request: Need to update all other cache lines through bus transaction, add to bus transaction queue
+    m_queuedBusTransactions.emplace(request, setIdx, blockIdx);
+    return;
+  }
+
+  ////// not in cache //////
+  ++Architecture::GlobalReport::numCacheMisses[request.coreNum];
+
+  blockIdx = findBlockIdxToReplace(request.coreNum, setIdx);
+  CacheLine& cacheLine = m_l1Caches[request.coreNum][setIdx][blockIdx];
+  // We evict the cache line and prepare to load in the new cache line through a bus transaction
+  int startingCycles = 0;
+  if (cacheLine.state == MODIFIED) { // if modified, we need to write back the dirty cache line first, so we add the cycles to the initial cycles needed
+    startingCycles += getAndLog_L1_CACHE_WRITE_BACK_CYCLES();
+  }
+  cacheLine.tag = getTag(request.address); // set tag
+  cacheLine.state = INVALID; // set state
+  cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
+  // Enqueue bus transaction
+  m_queuedBusTransactions.emplace(request, setIdx, blockIdx, startingCycles);
 }
 
 void DragonMemorySystem::processBusTransaction(BusTransaction& transaction) {
+  int initiatingCoreIdx = transaction.request.coreNum;
+  CacheLine& cacheLine = m_l1Caches[initiatingCoreIdx][transaction.setIdx][transaction.blockIdx];
 
+  // Load only issues bus transaction if loading from Invalid state
+  if (transaction.request.type == Architecture::LOAD) {
+    // check other caches for a valid copy of the cache line
+    bool foundOtherCopy = false;
+    for (int otherCoreIdx = 0; otherCoreIdx < Architecture::NUM_CORES; ++otherCoreIdx) {
+      if (otherCoreIdx == initiatingCoreIdx) continue; // dont check self
+      auto [otherSetIdx, otherBlockIdx] = findInCache(otherCoreIdx, transaction.request.address);
+      if (otherBlockIdx == INVALID_BLOCK_IDX) continue; // not in the other cache, continue
+      
+      // Cache line found in other cache
+      ++Architecture::GlobalReport::numSharedAccess;
+      foundOtherCopy = true;
+      CacheLine& otherCacheLine = m_l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
+
+      // Other cache has modified cache line, need to flush and go to shared modified
+      if (otherCacheLine.state == SHARED_MODIFIED || otherCacheLine.state == MODIFIED) {
+        transaction.remainingCycles += getAndLog_L1_CACHE_WRITE_BACK_CYCLES();
+        otherCacheLine.state = SHARED_MODIFIED;
+      }
+
+      // If other cache line is in exclusive state, it transitions to shared clean
+      if (otherCacheLine.state == EXCLUSIVE) {
+        otherCacheLine.state = SHARED_CLEAN;
+      }
+
+      // all states need to share the cache line with requestor
+      transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_BLOCK_FROM_BUS_CYCLES() + L1_CACHE_HIT_CYCLES;
+
+      cacheLine.state = SHARED_CLEAN; // transition self state to shared
+      break; // if we reach here means we have obtained a copy from a cache already, no need to continue search 
+    }
+
+    // didnt find other copy, need to load from memory
+    if (!foundOtherCopy) {
+      ++Architecture::GlobalReport::numPrivateAccess;
+
+      cacheLine.state = EXCLUSIVE; // transition self state to exclusive
+      transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_FROM_MEM_CYCLES() + L1_CACHE_HIT_CYCLES;
+    }
+  }
+
+  // Store issues bus transaction when storing from invalid or shared state
+  else {
+    ++Architecture::GlobalReport::busInvalidationsOrUpdates;
+
+    // There could be other caches holding this line, need to invalidate all of them first
+    bool foundOtherCopy = false;
+    bool hasCacheLine = cacheLine.state != INVALID;
+    for (int otherCoreIdx = 0; otherCoreIdx < Architecture::NUM_CORES; ++otherCoreIdx) {
+      if (otherCoreIdx == initiatingCoreIdx) continue; // dont check self
+      auto [otherSetIdx, otherBlockIdx] = findInCache(otherCoreIdx, transaction.request.address);
+      if (otherBlockIdx == INVALID_BLOCK_IDX) continue; // not in the other cache, continue
+
+      // Cache line found in other cache
+      foundOtherCopy = true;
+      CacheLine& otherCacheLine = m_l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
+
+      if (otherCacheLine.state == SHARED_MODIFIED || otherCacheLine.state == MODIFIED) { // Other cache line is modified, need to flush
+        transaction.remainingCycles += getAndLog_L1_CACHE_WRITE_BACK_CYCLES();
+      }
+
+      if (!hasCacheLine) { // if we dont have the cache line, we need to get it from other cache
+        transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_BLOCK_FROM_BUS_CYCLES();
+        hasCacheLine = true;
+      }
+
+      otherCacheLine.state = SHARED_CLEAN; // other cache line needs to go to shared clean regardless of state
+      transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_WORD_FROM_BUS_CYCLES(); // Perform write update to the other cache
+    }
+
+    // Log Memory Access Type
+    if (foundOtherCopy) ++Architecture::GlobalReport::numSharedAccess;
+    else ++Architecture::GlobalReport::numPrivateAccess;
+
+    // no cache(including us) has the cache line, we need to get the cache line from memory
+    if (!hasCacheLine) {
+      transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_FROM_MEM_CYCLES();
+    }
+
+    // We found no other valid cache line, hence safe to enter modified
+    if (!foundOtherCopy) {
+      cacheLine.state = MODIFIED;
+    }
+    // Else there are other valid cache lines so we are shared modified
+    else {
+      cacheLine.state = SHARED_MODIFIED;
+    }
+
+    transaction.remainingCycles += L1_CACHE_HIT_CYCLES; // 1 cycle writing into cache
+  }
+
+  transaction.processed = true; // set to processed 
 }
 
 }

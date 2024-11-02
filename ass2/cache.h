@@ -44,20 +44,14 @@ struct MemoryRequest {
 };
 
 struct BusTransaction {
-  enum TRANSACTION_TYPE {
-    BUS_RD, // MESI/DRAGON
-    BUS_RD_X, // MESI
-    BUS_UPD // DRAGON
-  };
-  TRANSACTION_TYPE type;
   MemoryRequest request;
   uint32_t setIdx;
   int blockIdx;
   bool processed = false;
   int remainingCycles = 0;
 
-  BusTransaction(TRANSACTION_TYPE type, const MemoryRequest& request, const uint32_t setIdx, const int blockIdx, const int remainingCycles = 0) 
-      : type(type), request(request), setIdx(setIdx), blockIdx(blockIdx), remainingCycles(remainingCycles) {}
+  BusTransaction(const MemoryRequest& request, const uint32_t setIdx, const int blockIdx, const int remainingCycles = 0) 
+      : request(request), setIdx(setIdx), blockIdx(blockIdx), remainingCycles(remainingCycles) {}
 };
 
 
