@@ -19,10 +19,12 @@ enum COHERENCE_PROTOCOL: uint8_t {
 };
 
 enum CACHELINE_STATE {
-  INVALID = 0,
+  INVALID = 0, // MESI/DRAGON
   EXCLUSIVE = 1, // MESI
   SHARED = 2, // MESI
-  MODIFIED = 3, // MESI
+  MODIFIED = 3, // MESI/DRAGON
+  SHARED_CLEAN = 4, // DRAGON
+  SHARED_MODIFIED = 5 // DRAGON
 };
 
 std::string toString(CACHELINE_STATE state);
@@ -43,8 +45,9 @@ struct MemoryRequest {
 
 struct BusTransaction {
   enum TRANSACTION_TYPE {
-    BUS_RD,
-    BUS_RD_X
+    BUS_RD, // MESI/DRAGON
+    BUS_RD_X, // MESI
+    BUS_UPD // DRAGON
   };
   TRANSACTION_TYPE type;
   MemoryRequest request;
