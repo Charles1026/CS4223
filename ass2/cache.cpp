@@ -201,8 +201,6 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request) {
     }
 
     // Shared State Store Request: Need to invalidate all other cache lines through bus transaction, add to bus transaction queue
-    ++Architecture::GlobalReport::numSharedAccess;
-
     m_queuedBusTransactions.emplace(BusTransaction::BUS_RD_X, request, setIdx, blockIdx);
     return;
   }
