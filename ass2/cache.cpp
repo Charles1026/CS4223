@@ -177,7 +177,7 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request) {
     ++Architecture::GlobalReport::numCacheHits[request.coreNum];
 
     CacheLine& cacheLine = m_l1Caches[request.coreNum][setIdx][blockIdx];
-    // Load Request: All laods from valid cache lines happen without bus transaction and state change
+    // Load Request: All loads from valid cache lines happen without bus transaction and state change
     if (request.type == Architecture::INSTRUCTION_TYPE::LOAD) {
       if (cacheLine.state == SHARED) {
         ++Architecture::GlobalReport::numSharedAccess;
