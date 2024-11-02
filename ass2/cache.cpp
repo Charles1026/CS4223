@@ -217,6 +217,7 @@ void MesiMemorySystem::handleIncomingRequest(const MemoryRequest& request) {
   }
   cacheLine.tag = getTag(request.address); // set tag
   cacheLine.state = INVALID; // set state
+  cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
   // Enqueue bus transaction
   m_queuedBusTransactions.emplace((request.type == Architecture::INSTRUCTION_TYPE::LOAD) ? BusTransaction::BUS_RD : BusTransaction::BUS_RD_X, request, setIdx, blockIdx, startingCycles);
 }
