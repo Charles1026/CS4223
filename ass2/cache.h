@@ -13,9 +13,11 @@ constexpr int L1_CACHE_WRITE_BACK_CYCLES = 100;
 constexpr int L1_CACHE_LOAD_FROM_BUS_PER_WORD_CYCLES = 2;
 constexpr char MESI_STRING[] = "MESI";
 constexpr char DRAGON_STRING[] = "DRAGON";
+constexpr char MOESI_STRING[] = "MOESI";
 enum COHERENCE_PROTOCOL: uint8_t {
   MESI,
-  DRAGON
+  DRAGON,
+  MOESI
 };
 
 enum CACHELINE_STATE {
@@ -24,7 +26,8 @@ enum CACHELINE_STATE {
   SHARED = 2, // MESI
   MODIFIED = 3, // MESI/DRAGON
   SHARED_CLEAN = 4, // DRAGON
-  SHARED_MODIFIED = 5 // DRAGON
+  SHARED_MODIFIED = 5, // DRAGON
+  OWNED = 6 // MOESI
 };
 
 std::string toString(CACHELINE_STATE state);
@@ -142,5 +145,16 @@ protected:
   void processBusTransaction(BusTransaction& transaction) override;
 
 };
+
+class MOESIMemorySystem : public MemorySystem {
+public:
+  MOESIMemorySystem() = default;
+
+protected:
+  void handleIncomingRequest(const MemoryRequest& request) override;
+  void processBusTransaction(BusTransaction& transaction) override;
+
+};
+
 
 }

@@ -13,6 +13,10 @@ CPU::CPU(std::array<std::vector<Architecture::Instruction>, Architecture::NUM_CO
     m_memorySystemPtr = std::make_unique<Cache::MesiMemorySystem>();
   } else if (protocol == Cache::DRAGON) {
     m_memorySystemPtr = std::make_unique<Cache::DragonMemorySystem>();
+  } else if (protocol == Cache::MOESI) {
+    m_memorySystemPtr = std::make_unique<Cache::MOESIMemorySystem>();
+  } else {
+    printf("Invalid cache coherence protocol used\n");
   }
 }
 

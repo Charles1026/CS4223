@@ -33,6 +33,12 @@ std::string toString(CACHELINE_STATE state) {
       return "Shared";
     case MODIFIED:
       return "Modified";
+    case SHARED_CLEAN:
+      return "Shared Clean";
+    case SHARED_MODIFIED:
+      return "Shared Modified";
+    case OWNED:
+      return "Owned";
   }
   return "Unknown State";
 }
@@ -465,4 +471,152 @@ void DragonMemorySystem::processBusTransaction(BusTransaction& transaction) {
   transaction.processed = true; // set to processed 
 }
 
+void MOESIMemorySystem::handleIncomingRequest(const MemoryRequest& request) {
+  auto [setIdx, blockIdx] = findInCache(request.coreNum, request.address);
+  ////// in cache //////
+  if (blockIdx != INVALID_BLOCK_IDX) {
+    ++Architecture::GlobalReport::numCacheHits[request.coreNum];
+
+    CacheLine& cacheLine = m_l1Caches[request.coreNum][setIdx][blockIdx];
+    // Load Request: All loads from valid cache lines happen without bus transaction and state change
+    if (request.type == Architecture::INSTRUCTION_TYPE::LOAD) {
+      if (cacheLine.state == SHARED || cacheLine.state == OWNED) {
+        ++Architecture::GlobalReport::numSharedAccess;
+      } else {
+        ++Architecture::GlobalReport::numPrivateAccess;
+      }
+
+      cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
+      m_executingNonBusRequests.emplace_back(request, L1_CACHE_HIT_CYCLES);
+      return;
+    }
+
+    // Exclusive/Modified State Store Request: can write and return immediately
+    if (cacheLine.state == EXCLUSIVE || cacheLine.state == MODIFIED) {
+      ++Architecture::GlobalReport::numPrivateAccess;
+
+      cacheLine.state = MODIFIED; // write changes exclusive to modified state, modified stays as modified
+      cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
+      m_executingNonBusRequests.emplace_back(request, L1_CACHE_HIT_CYCLES);
+      return;
+    }
+
+    // Shared/Owned State Store Request: Need to invalidate all other cache lines through bus transaction, add to bus transaction queue
+    m_queuedBusTransactions.emplace(request, setIdx, blockIdx);
+    return;
+  }
+
+  ////// not in cache //////
+  ++Architecture::GlobalReport::numCacheMisses[request.coreNum];
+
+  blockIdx = findBlockIdxToReplace(request.coreNum, setIdx);
+  CacheLine& cacheLine = m_l1Caches[request.coreNum][setIdx][blockIdx];
+  // We evict the cache line and prepare to load in the new cache line through a bus transaction
+  int startingCycles = 0;
+  if (cacheLine.state == MODIFIED || cacheLine.state == OWNED) { // if modified or owned, we need to write back the dirty cache line first, so we add the cycles to the initial cycles needed
+    startingCycles += getAndLog_L1_CACHE_WRITE_BACK_CYCLES();
+  }
+  cacheLine.tag = getTag(request.address); // set tag
+  cacheLine.state = INVALID; // set state
+  cacheLine.lastUsed = Architecture::GlobalCycleCounter::getCounter(); // set last used to now
+  // Enqueue bus transaction
+  m_queuedBusTransactions.emplace(request, setIdx, blockIdx, startingCycles);
 }
+
+void MOESIMemorySystem::processBusTransaction(BusTransaction& transaction) {
+  int initiatingCoreIdx = transaction.request.coreNum;
+  CacheLine& cacheLine = m_l1Caches[initiatingCoreIdx][transaction.setIdx][transaction.blockIdx];
+  
+  // Load only issues bus transaction if loading from Invalid state
+  if (transaction.request.type == Architecture::LOAD) {
+    // check other caches for a valid copy of the cache line
+    bool foundOtherCopy = false;
+    for (int otherCoreIdx = 0; otherCoreIdx < Architecture::NUM_CORES; ++otherCoreIdx) {
+      if (otherCoreIdx == initiatingCoreIdx) continue; // dont check self
+      auto [otherSetIdx, otherBlockIdx] = findInCache(otherCoreIdx, transaction.request.address);
+      if (otherBlockIdx == INVALID_BLOCK_IDX) continue; // not in the other cache, continue
+      
+      // Cache line found in other cache
+      ++Architecture::GlobalReport::numSharedAccess;
+      foundOtherCopy = true;
+      CacheLine& otherCacheLine = m_l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
+
+      // NOTE: FALLTHROUGHS HERE ARE INTENTIONAL FOR THE LOGIC
+      CACHELINE_STATE newOtherState = SHARED;
+      switch (otherCacheLine.state) {
+      case MODIFIED: 
+        [[fallthrough]];
+      case OWNED:
+        newOtherState = OWNED; // both modified and owned go to owned after sharing their cache line and no write back unlike MESI
+        [[fallthrough]];
+      case EXCLUSIVE:
+        [[fallthrough]];
+      case SHARED:
+        // All 3 states need to share their cache line with the requesting cache
+        transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_BLOCK_FROM_BUS_CYCLES() + L1_CACHE_HIT_CYCLES; // get block from other cache line
+        break;
+
+      default:
+        fprintf(stderr, "Error at %s, %s: invalid other cache state reached!", __FILE__, __func__);
+        break;
+      }
+
+      cacheLine.state = SHARED; // transition self state to owned/shared based on starting state
+      otherCacheLine.state = newOtherState; // the other cache line transitions to shared from any of modified/exclusive/shared
+      break; // if we reach here means we have obtained a copy from a cache already, no need to continue search 
+    }
+
+    // didnt find other copy, need to load from memory
+    if (!foundOtherCopy) {
+      ++Architecture::GlobalReport::numPrivateAccess;
+
+      cacheLine.state = EXCLUSIVE; // transition self state to exclusive
+      transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_FROM_MEM_CYCLES() + L1_CACHE_HIT_CYCLES;
+    }
+  } 
+
+  // Store issues bus transaction when storing from invalid, shared or owned state
+  else {
+    ++Architecture::GlobalReport::busInvalidationsOrUpdates;
+
+    // There could be other caches holding this line, need to invalidate all of them first
+    bool foundOtherCopy = false;
+    bool hasCacheLine = cacheLine.state != INVALID;
+    for (int otherCoreIdx = 0; otherCoreIdx < Architecture::NUM_CORES; ++otherCoreIdx) {
+      if (otherCoreIdx == initiatingCoreIdx) continue; // dont check self
+      auto [otherSetIdx, otherBlockIdx] = findInCache(otherCoreIdx, transaction.request.address);
+      if (otherBlockIdx == INVALID_BLOCK_IDX) continue; // not in the other cache, continue
+
+      // Cache line found in other cache
+      foundOtherCopy = true;
+      CacheLine& otherCacheLine = m_l1Caches[otherCoreIdx][otherSetIdx][otherBlockIdx]; // get other cache line
+
+      // // MOESI does not write back when sharing data
+      // if (otherCacheLine.state == MODIFIED || otherCacheLine.state == OWNED) { // The other cache line is dirty, we need to write it back to memory
+      //   transaction.remainingCycles += getAndLog_L1_CACHE_WRITE_BACK_CYCLES();
+      // }
+
+      if (!hasCacheLine) { // if we dont have the cache line, we need to get the block from other cache line
+        transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_BLOCK_FROM_BUS_CYCLES();
+        hasCacheLine = true;
+      }
+      otherCacheLine.state = INVALID; // invalidate other cache line
+    }
+
+    // Log Memory Access Type
+    if (foundOtherCopy) ++Architecture::GlobalReport::numSharedAccess;
+    else ++Architecture::GlobalReport::numPrivateAccess;
+
+    // no cache(including us) has the cache line, we need to get the cache line from memory
+    if (!hasCacheLine) {
+      transaction.remainingCycles += getAndLog_L1_CACHE_LOAD_FROM_MEM_CYCLES();
+    }
+    
+    cacheLine.state = MODIFIED; // set self to modified state
+    transaction.remainingCycles += L1_CACHE_HIT_CYCLES; // 1 cycle writing into cache
+  }
+
+  transaction.processed = true; // set to processed 
+}
+
+} // namespace

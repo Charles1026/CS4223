@@ -36,6 +36,8 @@ int main(int argc, char *argv[]) {
     protocol = Cache::MESI;
   } else if (!std::strcmp(argv[1], Cache::DRAGON_STRING)) {
     protocol = Cache::DRAGON;
+  } else if (!std::strcmp(argv[1], Cache::MOESI_STRING)) {
+    protocol = Cache::MOESI;
   } else {
     std::fprintf(stderr, "Error: Only %s or %s protocols allowed\n", Cache::MESI_STRING, Cache::DRAGON_STRING);
     return 1;
